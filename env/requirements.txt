@@ -13,14 +13,16 @@ aiohttp>=3.9
 # lindi               # optional: faster remote NWB loads
 
 # --- electrophysiology analysis ---
-nwbwidgets>=0.11
+# nwbwidgets>=0.11  # DISABLED: 0.11.3 pulls deprecated ndx-icephys-meta, which breaks on
+#                   # hdmf>=4 (removed call_docval_func). Use Neurosift to browse NWB visually,
+#                   # or pin hdmf<4 if you specifically need the in-Jupyter widgets.
 numpy>=1.26
 scipy>=1.13
 pandas>=2.2
 matplotlib>=3.8
 # spikeinterface[full,widgets]   # only if you re-sort; 000253 ships sorted units
-# fooof / specparam              # aperiodic-vs-oscillatory spectral separation (epych-style)
-fooof>=1.1
+fooof>=1.1          # aperiodic-vs-oscillatory spectral separation (epych / eLife use "FOOOF").
+                    # NB: fooof is deprecated in favour of `specparam` (same algorithm, new name).
 
 # --- the EEG-side bridge (apply the same contrasts to human data later) ---
 mne>=1.12

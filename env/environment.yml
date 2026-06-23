@@ -19,8 +19,8 @@ dependencies:
       - remfile>=0.1.13
       - fsspec>=2024.6
       - aiohttp>=3.9
-      - nwbwidgets>=0.11
-      - fooof>=1.1
+      # - nwbwidgets>=0.11   # breaks on hdmf>=4 (deprecated ndx-icephys-meta); use Neurosift instead
+      - fooof>=1.1           # deprecated in favour of `specparam` (same algorithm)
       - mne>=1.12
       # - lindi
       # - "spikeinterface[full,widgets]"   # only if re-sorting

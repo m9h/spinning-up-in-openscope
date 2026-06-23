@@ -58,8 +58,26 @@ git clone https://github.com/BastosLab/epych && cd epych
 | **Apptainer / Singularity** | AIND supports it | via `pull_pipeline_images.sh` (converts the GHCR images). **Neurodesk** is Apptainer-based and bundles MNE/FieldTrip/EEGLAB — but **not** PyNWB/DANDI/SpikeInterface (it's the human-EEG/MRI side). |
 | **Generic NGC PyTorch** (`nvcr.io/nvidia/pytorch:26.04-py3`) | the mouse NWB stack runs fine here | `pip install pynwb dandi h5py remfile` — pure-Python/manylinux, no CUDA. Smoke-test before committing. |
 
-See [`env/`](../env) for a ready conda env, `requirements.txt`, and a Dockerfile/Apptainer recipe
-in this repo.
+### This repo's environment (uv — the default)
+
+The fastest, project-local path. Verified working end-to-end (streams a live 000253 session):
+
+```bash
+uv venv --python 3.12 .venv          # project-local .venv
+uv pip install -r env/requirements.txt
+# exact reproduce of the verified set:
+uv pip sync env/requirements.lock.txt
+```
+
+- **`env/requirements.lock.txt`** pins the verified-working set (dandi 0.76.4, pynwb 3.1.3,
+  hdmf 4.3.1, h5py 3.16, remfile 0.1.13, mne 1.12.1, fooof 1.1.1, …).
+- **Python 3.12** is used for this venv (all listed deps support it). **AllenSDK** (≤3.11) and the
+  **OpenScope Databook** want their *own* 3.10 env — keep them separate.
+- **nwbwidgets is excluded**: 0.11.3 pulls the deprecated `ndx-icephys-meta`, which breaks on
+  `hdmf>=4`. Use **Neurosift** to browse NWB visually, or pin `hdmf<4` if you must have the widgets.
+
+See [`env/`](../env) for the conda env, `requirements.txt`, lockfile, and Dockerfile/Apptainer
+recipes.
 
 ## 4 · EEG-ready tooling (the cross-species bridge)
 

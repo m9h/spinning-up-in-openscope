@@ -29,17 +29,24 @@ This repo collects, in one place:
 ## Quickstart
 
 ```bash
-# 1. Environment (pick one)
-conda env create -f env/environment.yml && conda activate openscope
-#   or:  pip install -r env/requirements.txt
-#   or:  docker build -t spinning-up-openscope env/   (see env/Dockerfile)
+# 1. Environment (pick one). uv is the project default — fast, project-local .venv:
+uv venv --python 3.12 .venv && uv pip install -r env/requirements.txt
+source .venv/bin/activate
+#   reproduce the exact verified set:  uv pip sync env/requirements.lock.txt
+#   or conda:  conda env create -f env/environment.yml && conda activate openscope
+#   or pip:    pip install -r env/requirements.txt
+#   or docker: docker build -t spinning-up-openscope env/   (see env/Dockerfile)
 
-# 2. Peek at the published mouse dataset WITHOUT downloading 632 GB (streaming)
+# 2. Peek at the published mouse dataset WITHOUT downloading 680 GB (streaming)
 python scripts/stream_first_nwb.py            # streams one session from DANDI:000253
 
 # 3. Or grab a single session locally
-bash scripts/download_dandi.sh 000253         # full set is ~632 GB — see the script for one-asset mode
+bash scripts/download_dandi.sh 000253         # full set is ~680 GB — see the script for one-asset mode
 ```
+
+> The `.venv` is verified working end-to-end (it streams a live 000253 session). Pins are
+> snapshotted in [`env/requirements.lock.txt`](env/requirements.lock.txt). Python 3.12 here; the
+> separate OpenScope Databook / AllenSDK tooling needs its own 3.10 env (see [`docs/03`](docs/03-analysis-pipelines.md)).
 
 ## The one-paragraph orientation
 
