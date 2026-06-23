@@ -48,12 +48,25 @@ brainsets prepare ./brainsets_pipelines/allen_openscope_neuropixels --local \
 - `stimulus` — `Interval` of all `*presentations` tables (orientation/contrast/TF/SF/phase/name)
 - `train_domain/valid_domain/test_domain` — temporal 80/10/10 (per-session decoding eval)
 
-## Validation checklist (per dandiset — column names drift)
-- [ ] `units` has `peak_channel_id` (else map via `peak_channel`)
-- [ ] `electrodes` has finite `x,y,z` (CCF) — unregistered probes → NaN coords
-- [ ] `processing['running']` interface name (`running_speed` vs `speed`)
-- [ ] which `*presentations` tables hold the oddball; derive `is_deviant`/`local`/`global`
-      from `stimulus_name`/`orientation` per paradigm
-- [ ] confirm a `RecordingTech` Neuropixels/multi-electrode member in your taxonomy version
+## Validate before a real run
 
-Validated against `sub-621890_ses-1186358749` of DANDI:000253 (streamed 2026-06-23).
+`validate_one_session.py` streams one session and exercises the extractors with plain
+numpy/pandas (no temporaldata/brainsets), so it runs in the spinning-up venv:
+
+```bash
+python brainsets_pipelines/allen_openscope_neuropixels/validate_one_session.py --dandiset 000253
+```
+
+### Checklist (per dandiset — structure & column names drift)
+- [x] **session vs per-probe files:** units/running/stimulus are in the SESSION file
+      (`*_ogen.nwb` for 000253); `*_probe-N_ecephys.nwb` are LFP-only → `get_manifest` skips them.
+- [x] `units` has `peak_channel_id`; `electrodes` has finite `x,y,z` (CCF) + `location`.
+- [x] running speed = `processing['running'].running_speed` — **has encoder artifacts**
+      (000253: down to −746 cm/s); pipeline rejects `|v|>150 cm/s` as NaN.
+- [ ] which `*presentations` tables hold the oddball; derive `is_deviant`/`local`/`global`
+      from `stimulus_name`/`orientation` per paradigm (4 tables in 000253).
+- [ ] confirm a `RecordingTech` Neuropixels/multi-electrode member in your taxonomy version.
+
+**Validated 2026-06-23** against `sub-621890_ses-1186358749_ogen.nwb` (DANDI:000253, streamed):
+ALL CHECKS PASSED — 2446 units / 110.7M spikes / **CCF coords 100% finite** (VISl/VISpm/CA1/
+thalamus) / running + 4 stimulus tables present.

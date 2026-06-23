@@ -88,8 +88,12 @@ class Pipeline(BrainsetPipeline):
     @classmethod
     def get_manifest(cls, raw_dir, args) -> pd.DataFrame:
         asset_list = get_nwb_asset_list(f"DANDI:{args.dandiset}")
-        rows = [{"path": x.path, "url": x.download_url} for x in asset_list]
-        # one processed file per NWB asset; id from the asset path (sub-XXX_ses-YYY...).
+        # VALIDATED: 000253 splits a session across files — the units/running/stimulus live
+        # in the SESSION file (`*_ogen.nwb` here), while `*_probe-N_ecephys.nwb` are per-probe
+        # raw/LFP only. Keep session files; skip per-probe LFP (no units to ingest).
+        rows = [{"path": x.path, "url": x.download_url} for x in asset_list
+                if "probe-" not in x.path.lower()]
+        # one processed file per session NWB; id from the asset path (sub-XXX_ses-YYY...).
         for r in rows:
             stem = r["path"].split("/")[-1].replace(".nwb", "")
             r["id"] = f"{args.dandiset}_{stem}"
@@ -258,6 +262,11 @@ def extract_running_speed(nwbfile, rate=50.0):
 
     t = np.asarray(ts.timestamps[:], dtype=float)
     v = np.asarray(ts.data[:], dtype=float).reshape(-1)
+    # VALIDATED: Allen running_speed (cm/s) carries encoder artifacts — e.g. 000253 sub-621890
+    # spans [-746, 120] cm/s. Reject the non-physical tail (|v|>MAX) as NaN so it doesn't leak
+    # into the interpolated readout target; small negatives from filtering are kept.
+    MAX_CM_S = 150.0
+    v = np.where(np.abs(v) > MAX_CM_S, np.nan, v)
     ok = np.isfinite(t) & np.isfinite(v)
     t, v = t[ok], v[ok]
     if t.size < 2:
