@@ -1,0 +1,22 @@
+# Data — never commit the 680 GB dandiset
+data/
+*.nwb
+*.nwb.lindi.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+*.egg-info/
+.ipynb_checkpoints/
+
+# Notebooks: keep outputs out of git
+# (strip with: jupyter nbconvert --clear-output --inplace notebooks/*.ipynb)
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/

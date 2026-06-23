@@ -1,0 +1,26 @@
+# Spinning Up in OpenScope — Apptainer/Singularity recipe
+#   apptainer build openscope.sif env/apptainer.def
+#   apptainer exec openscope.sif python scripts/stream_first_nwb.py
+#
+# For Slurm on gx10-dgx-spark, run with: apptainer exec --nv openscope.sif ...
+# (the NWB stack needs no GPU; --nv only matters for downstream CUDA modeling).
+
+Bootstrap: docker
+From: python:3.10-slim
+
+%files
+    requirements.txt /opt/requirements.txt
+
+%post
+    apt-get update && apt-get install -y --no-install-recommends git build-essential
+    rm -rf /var/lib/apt/lists/*
+    pip install --upgrade pip
+    pip install -r /opt/requirements.txt
+    python -c "import pynwb, dandi, h5py, remfile, mne; print('OpenScope stack OK')"
+
+%runscript
+    exec python "$@"
+
+%labels
+    Project spinning-up-in-openscope
+    Description OpenScope predictive-processing mouse-data analysis + EEG bridge

@@ -1,0 +1,28 @@
+# Spinning Up in OpenScope — conda environment
+#   conda env create -f env/environment.yml && conda activate openscope
+# Python pinned to 3.10 for OpenScope Databook / AllenSDK compatibility.
+name: openscope
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pip
+  - numpy>=1.26
+  - scipy>=1.13
+  - pandas>=2.2
+  - matplotlib>=3.8
+  - h5py>=3.11
+  - jupyterlab>=4.2
+  - pip:
+      - dandi>=0.76
+      - pynwb>=3.1
+      - remfile>=0.1.13
+      - fsspec>=2024.6
+      - aiohttp>=3.9
+      - nwbwidgets>=0.11
+      - fooof>=1.1
+      - mne>=1.12
+      # - lindi
+      # - "spikeinterface[full,widgets]"   # only if re-sorting
+      # - allensdk                          # methods/QC reference; Py<=3.11 only
+      # - pyhgf>=0.3                         # trial-by-trial PE regressors (EEG side)

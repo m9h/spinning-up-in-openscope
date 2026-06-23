@@ -1,0 +1,31 @@
+# Spinning Up in OpenScope — core analysis environment (pip)
+# Pure-Python / manylinux wheels: no CUDA, runs anywhere incl. the GB10 NGC container.
+# Pin loosely; re-check at install time (see docs/03 caveats).
+
+# --- DANDI / NWB access ---
+dandi>=0.76
+pynwb>=3.1
+hdmf>=3.14
+h5py>=3.11
+remfile>=0.1.13      # stream NWB over S3 without downloading
+fsspec>=2024.6
+aiohttp>=3.9
+# lindi               # optional: faster remote NWB loads
+
+# --- electrophysiology analysis ---
+nwbwidgets>=0.11
+numpy>=1.26
+scipy>=1.13
+pandas>=2.2
+matplotlib>=3.8
+# spikeinterface[full,widgets]   # only if you re-sort; 000253 ships sorted units
+# fooof / specparam              # aperiodic-vs-oscillatory spectral separation (epych-style)
+fooof>=1.1
+
+# --- the EEG-side bridge (apply the same contrasts to human data later) ---
+mne>=1.12
+# pyhgf>=0.3          # JAX HGF for trial-by-trial prediction-error regressors
+# mtrf                # temporal response functions
+
+# --- notebook ---
+jupyterlab>=4.2
