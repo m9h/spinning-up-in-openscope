@@ -25,6 +25,7 @@ This repo collects, in one place:
 3. **Which pipelines / containers to install** to analyze it. → [`docs/03-analysis-pipelines.md`](docs/03-analysis-pipelines.md)
 4. **The human-EEG plans & matching papers** by Auksztulewicz, Basiński, Bastos. → [`docs/04-human-eeg-plans.md`](docs/04-human-eeg-plans.md)
 5. **What combined mouse↔human analyses** are feasible with data in hand. → [`docs/05-cross-species-analysis.md`](docs/05-cross-species-analysis.md)
+6. **A mouse Neuropixels foundation model** from the OpenScope pool (the spiking counterpart of OmniMouse). → [`docs/06-mouse-ephys-foundation-model.md`](docs/06-mouse-ephys-foundation-model.md) · scaffold: [`brainsets_pipelines/allen_openscope_neuropixels/`](brainsets_pipelines/allen_openscope_neuropixels/)
 
 ## Quickstart
 
