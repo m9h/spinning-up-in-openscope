@@ -43,6 +43,12 @@ monotonically with data. So:
 2. **Spatial unit embedding** — `posᵢ` = the unit's **CCFv3 (x,y,z)+region** (extracted by
    the brainset). MLP over CCF → a unit identity that **generalizes to unseen sessions**.
    Use it **residual with** a learnable unit embedding (spatial alone loses tuning identity).
+   *Data caveat (swept 2026-06-23):* the 4 older ecephys sets (000253/000248/000563/000690)
+   have real per-unit CCF (≈900–1100 distinct coords/session); the **2 newest community sets
+   (001191 Loop, 001637 PredProc-Ecephys) are NOT CCF-registered** (degenerate / all-`unknown`
+   anatomy, only probe-space `estimated_x/y/z`). They need an Allen-CCF registration step
+   before the spatial embedding applies — until then train them via the learnable-unit path.
+   See the [pipeline README](../brainsets_pipelines/allen_openscope_neuropixels/README.md#pool-compatibility-swept-2026-06-23-one-session-each).
 3. **PerceiverIO** cross-attention bottleneck (O(N) over the spike stream) → latent
    self-attention → query-based cross-attention decoder. Same backbone as POYO/OmniMouse.
 4. **Multimodal masking** (NEDS/OmniMouse recipe) — jointly model spikes + **stimulus**

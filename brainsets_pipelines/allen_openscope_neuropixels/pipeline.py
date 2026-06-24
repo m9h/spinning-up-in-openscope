@@ -192,55 +192,125 @@ class Pipeline(BrainsetPipeline):
             data.to_hdf5(file, serialize_fn_map=serialize_fn_map)
 
 
+# CCF column-name variants + running module names (VALIDATED across the pool, 2026-06-23).
+# openscope_nwb.py is the tested reference for this logic; kept inline so brainsets can exec
+# this pipeline standalone. Keep the two in sync.
+CCF_COLS = [
+    ("x", "y", "z"),
+    ("anterior_posterior_ccf_coordinate",
+     "dorsal_ventral_ccf_coordinate",
+     "left_right_ccf_coordinate"),
+]
+CCF_MIN_MAX_UM = 100.0  # reject degenerate placeholder x/y/z (001191: values ~0-10, not CCF)
+RUN_KEYS = ("running_speed", "running_speed_new", "speed", "running_wheel_velocity")
+
+
+def _unit_electrode_row(nwbfile):
+    """Row index into electrodes per unit (-1 if unknown). Handles BOTH conventions:
+    older units['peak_channel_id'] (electrode id -> row) and newer units['electrodes']
+    DynamicTableRegion (ragged -> first/peak electrode row)."""
+    units = nwbfile.units
+    cols = list(units.colnames)
+    if "peak_channel_id" in cols:
+        elec_ids = np.asarray(nwbfile.electrodes.id[:])
+        pos = {int(i): r for r, i in enumerate(elec_ids)}
+        peak = np.asarray(units["peak_channel_id"][:])
+        return np.array([pos.get(int(p), -1) for p in peak], int)
+    if "electrodes" in cols and getattr(units, "electrodes_index", None) is not None:
+        # units.electrodes is the unit's FULL waveform electrode set (first row is electrode 0
+        # for every unit) — the peak is units['extremum_channel_index'] (within-set offset, or
+        # a global row). Using the first row would map all units to the same coordinate.
+        flat = np.asarray(units.electrodes.data[:])
+        bounds = np.asarray(units.electrodes_index.data[:])
+        starts = np.concatenate([[0], bounds[:-1]])
+        n_elec = len(nwbfile.electrodes)
+        ext = (np.asarray(units["extremum_channel_index"][:])
+               if "extremum_channel_index" in cols else np.zeros(len(units), int))
+        out = np.full(len(units), -1, int)
+        for i in range(len(units)):
+            s, e = int(starts[i]), int(bounds[i])
+            grp, x = e - s, int(ext[i])
+            if 0 <= x < grp:
+                out[i] = flat[s + x]
+            elif 0 <= x < n_elec:
+                out[i] = x
+            elif e > s:
+                out[i] = flat[s]
+        return out
+    return np.full(len(units), -1, int)
+
+
+def _electrode_ccf(nwbfile):
+    """(coords [n_elec,3] µm or None, regions or None) row-indexed. Region (from 'location')
+    is independent of CCF so datasets with regions but no absolute CCF (e.g. 001637, whose
+    community SpikeInterface pipeline skipped Allen registration) still get region tokens."""
+    el = nwbfile.electrodes
+    cols = list(el.colnames)
+    region = [str(s) for s in el["location"][:]] if "location" in cols else None
+    for trio in CCF_COLS:
+        if all(c in cols for c in trio):
+            xyz = np.stack([np.asarray(el[c][:], float) for c in trio], axis=1)
+            ok = xyz[np.isfinite(xyz).all(1)]
+            if ok.size and np.nanmax(np.abs(ok)) >= CCF_MIN_MAX_UM:
+                return xyz, region  # plausible CCF µm
+            # else degenerate placeholder coords (not CCF) -> fall through to region-only
+    return None, region
+
+
 def extract_spikes_units_ccf(nwbfile):
-    """Spikes + units WITH Allen CCFv3 coordinates.
+    """Spikes + units WITH Allen CCFv3 coordinates ([V1]/[V2]).
 
-    Returns (spikes: IrregularTimeSeries, units: ArrayDict). Each unit gets its CCF
-    coordinate + region from its peak channel's electrode row ([V1]/[V2]). Units that are
-    unregistered (x/y/z missing or <=0) get NaN coords — the spatial-embedding MLP should
-    learn a NaN/missing token, or fall back to the learnable unit embedding for those.
+    Returns (spikes: IrregularTimeSeries, units: ArrayDict). Each unit's CCF coord + region
+    come from its electrode row via whichever link convention the file uses. Unregistered
+    units (coords missing or <=0) get NaN — the spatial-embedding MLP learns a missing
+    token, or falls back to the learnable unit embedding for those.
     """
-    units_df = nwbfile.units.to_dataframe()
-    elec_df = nwbfile.electrodes.to_dataframe()  # index = electrode id
+    units = nwbfile.units
+    n = len(units)
+    rows = _unit_electrode_row(nwbfile)
+    xyz_el, region_el = _electrode_ccf(nwbfile)
 
-    def ccf_for(peak_ch):
-        try:
-            row = elec_df.loc[peak_ch]
-        except (KeyError, TypeError):
-            return (np.nan, np.nan, np.nan, "unknown")
-        x, y, z = (float(row.get(k, np.nan)) for k in ("x", "y", "z"))
-        if not np.isfinite([x, y, z]).all() or min(x, y, z) <= 0:
-            x = y = z = np.nan
-        return (x, y, z, str(row.get("location", "unknown")))
+    def col(name, default=np.nan):
+        return np.asarray(units[name][:]) if name in units.colnames else np.full(n, default)
+
+    fr, snr, isi = col("firing_rate"), col("snr"), col("isi_violations")
+    qual = units["quality"][:] if "quality" in units.colnames else [""] * n
+    ids = np.asarray(units.id[:])
+    sti = units.spike_times_index
 
     timestamps, unit_index, unit_meta = [], [], []
-    for i, (uid, row) in enumerate(units_df.iterrows()):
-        st = np.asarray(row["spike_times"], dtype=float)
+    for i in range(n):
+        st = np.asarray(sti[i], dtype=float)
         timestamps.append(st)
         unit_index.append(np.full(len(st), i, dtype=np.int64))
-        peak_ch = row.get("peak_channel_id", row.get("peak_channel", -1))
-        cx, cy, cz, region = ccf_for(peak_ch)
+        cx = cy = cz = np.nan
+        region = "unknown"
+        r = rows[i]
+        max_rows = (len(xyz_el) if xyz_el is not None
+                    else len(region_el) if region_el is not None else 0)
+        if 0 <= r < max_rows:
+            if xyz_el is not None:
+                c = xyz_el[r]
+                if np.isfinite(c).all() and c.min() > 0:
+                    cx, cy, cz = c
+            if region_el is not None:
+                region = region_el[r]
         unit_meta.append({
-            "id": f"unit_{uid}",
-            "unit_number": i,
-            "count": len(st),
-            "ccf_x": cx, "ccf_y": cy, "ccf_z": cz,
-            "region": region,
-            "firing_rate": float(row.get("firing_rate", np.nan)),
-            "snr": float(row.get("snr", np.nan)),
-            "isi_violations": float(row.get("isi_violations", np.nan)),
-            "quality": str(row.get("quality", "")),
+            "id": f"unit_{int(ids[i])}", "unit_number": i, "count": len(st),
+            "ccf_x": cx, "ccf_y": cy, "ccf_z": cz, "region": region,
+            "firing_rate": float(fr[i]), "snr": float(snr[i]),
+            "isi_violations": float(isi[i]), "quality": str(qual[i]),
             "type": int(RecordingTech.MULTI_ELECTRODE_SPIKES),
         })
 
-    units = ArrayDict.from_dataframe(pd.DataFrame(unit_meta), unsigned_to_long=True)
+    units_ad = ArrayDict.from_dataframe(pd.DataFrame(unit_meta), unsigned_to_long=True)
     spikes = IrregularTimeSeries(
         timestamps=np.concatenate(timestamps),
         unit_index=np.concatenate(unit_index),
         domain="auto",
     )
     spikes.sort()
-    return spikes, units
+    return spikes, units_ad
 
 
 def extract_running_speed(nwbfile, rate=50.0):
@@ -250,13 +320,22 @@ def extract_running_speed(nwbfile, rate=50.0):
     continuous readout expects a RegularTimeSeries, so we linearly interpolate onto a
     fixed-rate grid spanning the recording ([V4]). Returns None if absent.
     """
-    proc = nwbfile.processing.get("running")
     ts = None
-    if proc is not None:
-        for key in ("running_speed", "speed", "running_wheel_velocity"):
-            if key in proc.data_interfaces:
-                ts = proc.data_interfaces[key]
+    for mod in nwbfile.processing:  # 'running' (older) or 'running_new' (e.g. 001191)
+        if "run" not in mod.lower():
+            continue
+        di = nwbfile.processing[mod].data_interfaces
+        for key in RUN_KEYS:
+            if key in di:
+                ts = di[key]
                 break
+        if ts is None:  # fallback: any 'speed' interface (e.g. running_speed_new)
+            for k, v in di.items():
+                if "speed" in k.lower():
+                    ts = v
+                    break
+        if ts is not None:
+            break
     if ts is None:
         return None
 

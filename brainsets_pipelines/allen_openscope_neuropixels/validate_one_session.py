@@ -1,21 +1,21 @@
 #!/usr/bin/env python
-"""Validate the allen_openscope_neuropixels extraction logic against a live DANDI session.
+"""Validate the allen_openscope_neuropixels extraction against a live DANDI session.
 
-Streams one OpenScope Neuropixels NWB (no download) and exercises the SAME parsing that
-pipeline.py does — units+CCF, running speed, stimulus presentations — but with plain
-numpy/pandas (NO temporaldata/brainsets), so it runs in the spinning-up venv. Use it to
-shake out per-dandiset column-name drift before a real `brainsets prepare`.
+Streams one OpenScope Neuropixels NWB (no download) and exercises the SAME parsing the
+pipeline does — units+CCF, running speed, stimulus — via the shared openscope_nwb module
+(plain numpy/pandas, no temporaldata/brainsets), so it runs in the spinning-up venv.
 
-    python validate_one_session.py --dandiset 000253          # auto-picks a main (non-ogen) session
+    python validate_one_session.py --dandiset 000253          # auto-picks the session file
     python validate_one_session.py --dandiset 001637 --index 0
 
-Exit code 0 = all checks passed. Requires: dandi pynwb h5py remfile numpy pandas.
+Exit 0 = all checks passed. Requires: dandi pynwb h5py remfile numpy pandas.
 """
 import argparse
 import sys
 
 import numpy as np
-import pandas as pd
+
+from openscope_nwb import unit_ccf, find_running, resample_running, stim_tables
 
 
 def stream_nwb(dandiset, version, index, prefer_main):
@@ -30,9 +30,7 @@ def stream_nwb(dandiset, version, index, prefer_main):
         raise SystemExit(f"No assets in DANDI:{dandiset}")
     if index is None:
         index = 0
-        if prefer_main:
-            # The units/running/stimulus live in the SESSION-level file; `*_probe-N_ecephys.nwb`
-            # are per-probe raw/LFP only. For 000253 the session file is `*_ogen.nwb`.
+        if prefer_main:  # session file carries units/running/stimulus; probe-N are LFP-only
             for i, a in enumerate(assets):
                 if "probe-" not in a.path.lower():
                     index = i
@@ -40,89 +38,47 @@ def stream_nwb(dandiset, version, index, prefer_main):
     asset = assets[index]
     url = asset.get_content_url(follow_redirects=1, strip_query=True)
     print(f"[stream] {len(assets)} assets; #{index}: {asset.path}")
-    rem = remfile.File(url)
-    h5 = h5py.File(rem, "r")
-    nwb = NWBHDF5IO(file=h5, mode="r", load_namespaces=True).read()
-    return nwb, asset.path
+    h5 = h5py.File(remfile.File(url), "r")
+    return NWBHDF5IO(file=h5, mode="r", load_namespaces=True).read(), asset.path
 
 
 def check_units_ccf(nwb):
-    """units count, total spikes (via index, cheap), and CCF coverage from peak channel."""
-    n_units = len(nwb.units)
+    n = len(nwb.units)
     n_spikes = int(nwb.units.spike_times_index.data[-1])
-    cols = list(nwb.units.colnames)
-    peak_col = "peak_channel_id" if "peak_channel_id" in cols else (
-        "peak_channel" if "peak_channel" in cols else None)
-    assert peak_col, f"no peak_channel(_id) column; units cols={cols}"
-    peak = np.asarray(nwb.units[peak_col][:])
-
-    elec = nwb.electrodes.to_dataframe()
-    ecols = list(elec.columns)
-    for k in ("x", "y", "z", "location"):
-        assert k in ecols, f"electrodes missing '{k}'; cols={ecols}"
-
-    xyz, regions = [], []
-    for pc in peak:
-        try:
-            row = elec.loc[pc]
-        except (KeyError, TypeError):
-            xyz.append((np.nan, np.nan, np.nan)); regions.append("unknown"); continue
-        x, y, z = (float(row["x"]), float(row["y"]), float(row["z"]))
-        if not np.isfinite([x, y, z]).all() or min(x, y, z) <= 0:
-            x = y = z = np.nan
-        xyz.append((x, y, z)); regions.append(str(row["location"]))
-    xyz = np.array(xyz)
-    finite = np.isfinite(xyz).all(axis=1)
-    frac = finite.mean() if len(finite) else 0.0
+    coords, regions, method, ccf_cols = unit_ccf(nwb)
+    fin = np.isfinite(coords).all(1)
+    frac = fin.mean() if len(fin) else 0.0
+    import pandas as pd
     top = pd.Series(regions).value_counts().head(6).to_dict()
-
-    print(f"[units]  n_units={n_units}  n_spikes={n_spikes:,}  peak_col={peak_col}")
-    print(f"[ccf]    finite CCF coords: {finite.sum()}/{len(finite)} ({frac:.0%})")
-    if finite.any():
-        ex = xyz[finite][0]
-        print(f"[ccf]    example coord (µm): x={ex[0]:.0f} y={ex[1]:.0f} z={ex[2]:.0f}")
+    print(f"[units]  n_units={n}  n_spikes={n_spikes:,}  link={method}")
+    print(f"[ccf]    cols={ccf_cols}  finite: {int(fin.sum())}/{len(fin)} ({frac:.0%})")
+    if fin.any():
+        ex = coords[fin][0]
+        print(f"[ccf]    example (µm): x={ex[0]:.0f} y={ex[1]:.0f} z={ex[2]:.0f}")
     print(f"[ccf]    top regions: {top}")
-    assert n_units > 0 and n_spikes > 0, "no units/spikes"
-    assert frac > 0.0, "no units have finite CCF coords (registration missing?)"
-    return True
+    assert n > 0 and n_spikes > 0, "no units/spikes"
+    assert method != "none", "no unit->electrode link (neither peak_channel_id nor electrodes)"
+    assert frac > 0.0, "no units have finite CCF coords"
 
 
 def check_running(nwb, rate=50.0):
-    proc = nwb.processing.get("running")
-    assert proc is not None, f"no 'running' processing module; have {list(nwb.processing)}"
-    names = list(proc.data_interfaces)
-    ts = None
-    for key in ("running_speed", "speed", "running_wheel_velocity"):
-        if key in proc.data_interfaces:
-            ts = proc.data_interfaces[key]; chosen = key; break
-    assert ts is not None, f"no known running-speed interface; have {names}"
-    t = np.asarray(ts.timestamps[:], float)
-    v = np.asarray(ts.data[:], float).reshape(-1)
-    ok = np.isfinite(t) & np.isfinite(v)
-    t, v = t[ok], v[ok]
-    n = int(round((t[-1] - t[0]) * rate)) + 1
-    grid = t[0] + np.arange(n) / rate
-    speed = np.interp(grid, t, v)
-    print(f"[running] interface='{chosen}' (avail={names})")
-    print(f"[running] {len(t):,} samples; resampled->{n:,}@{rate:g}Hz; "
-          f"speed range [{speed.min():.1f},{speed.max():.1f}] mean={speed.mean():.2f}")
-    assert n > 1, "running speed too short"
-    return True
+    mod, iface, ts = find_running(nwb)
+    assert ts is not None, f"no running speed (modules={list(nwb.processing)})"
+    out = resample_running(ts, rate=rate)
+    assert out is not None, "running speed too short after artifact rejection"
+    _, speed = out
+    print(f"[running] module='{mod}' iface='{iface}'  ->  {len(speed):,}@{rate:g}Hz; "
+          f"clean range [{speed.min():.1f},{speed.max():.1f}] mean={speed.mean():.2f} cm/s")
 
 
 def check_stimulus(nwb):
-    tables = [k for k in nwb.intervals if "presentation" in k.lower()]
-    assert tables, f"no '*presentation*' interval tables; have {list(nwb.intervals)}"
-    visual = ("orientation", "contrast", "temporal_frequency", "spatial_frequency",
-              "phase", "stimulus_name", "stimulus_block")
+    tables = stim_tables(nwb)
+    assert tables, f"no '*presentation*' tables (intervals={list(nwb.intervals or {})})"
     total = 0
-    for name in tables:
-        df = nwb.intervals[name].to_dataframe()
-        present = [c for c in visual if c in df.columns]
-        total += len(df)
-        print(f"[stim]   {name}: {len(df)} rows; visual cols={present}")
-    assert total > 0, "stimulus tables are empty"
-    return True
+    for name, (cnt, vis) in tables.items():
+        total += cnt
+        print(f"[stim]   {name}: {cnt} rows; visual={vis}")
+    assert total > 0, "stimulus tables empty"
 
 
 def main():
@@ -139,10 +95,9 @@ def main():
     except ImportError as e:
         print(f"missing dep: {e}. pip install dandi pynwb h5py remfile"); return 2
 
-    checks = [("units+CCF", check_units_ccf), ("running", check_running),
-              ("stimulus", check_stimulus)]
     failed = []
-    for label, fn in checks:
+    for label, fn in [("units+CCF", check_units_ccf), ("running", check_running),
+                      ("stimulus", check_stimulus)]:
         try:
             fn(nwb)
         except AssertionError as e:

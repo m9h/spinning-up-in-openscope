@@ -50,12 +50,37 @@ brainsets prepare ./brainsets_pipelines/allen_openscope_neuropixels --local \
 
 ## Validate before a real run
 
-`validate_one_session.py` streams one session and exercises the extractors with plain
-numpy/pandas (no temporaldata/brainsets), so it runs in the spinning-up venv:
+`validate_one_session.py` (one session) and `sweep_pool.py` (one session per pool dandiset)
+exercise the extractors with plain numpy/pandas (no temporaldata/brainsets), so they run in
+the spinning-up venv. They share parsing with the pipeline via `openscope_nwb.py`.
 
 ```bash
 python brainsets_pipelines/allen_openscope_neuropixels/validate_one_session.py --dandiset 000253
+python brainsets_pipelines/allen_openscope_neuropixels/sweep_pool.py     # whole pool
 ```
+
+### Pool compatibility (swept 2026-06-23, one session each)
+
+| DANDI | units | spikes | unit→elec link | CCF (distinct/unit) | running | status |
+|---|---|---|---|---|---|---|
+| 000253 | 2446 | 110.7M | peak_channel_id | 100% (897) | running | **READY** |
+| 000248 | 3026 | 137.1M | peak_channel_id | 99% (1030) | running | **READY** |
+| 000563 | 2299 | 121.6M | peak_channel_id | 100% (970) | running | **READY** |
+| 000690 | 3091 | 81.2M | peak_channel_id | 100% (1086) | running | **READY** |
+| 001191 | 3307 | 131.4M | electrodes_region | — (region-only) | running_new | needs CCF reg. |
+| 001637 | 4247 | 94.6M | electrodes_region+extremum | — (no anat.) | running | needs CCF reg. |
+
+**Two conventions, three gotchas the sweep caught:**
+- **unit→electrode link:** older sets use `peak_channel_id` (→ electrode id); newer community
+  sets use the `units.electrodes` region — and the *peak* is `extremum_channel_index`, NOT the
+  first row (first row = electrode 0 for every unit → all-same-coordinate bug).
+- **running module:** `running` vs `running_new` (iface `running_speed` vs `running_speed_new`).
+- **CCF registration gap:** the two newest **community SpikeInterface** sets (**001191, 001637**)
+  are **not Allen-CCF-registered** — 001191's electrode `x/y/z` are degenerate placeholders
+  (~0–10, rejected by a magnitude guard) and 001637's `location` is all `unknown`. Both ship
+  per-unit **`estimated_x/y/z`** (probe space). To use them in the CCF spatial embedding, run
+  CCF registration; until then use region (001191) / probe-space estimates as a coarse token,
+  or train them via the learnable unit-embedding path only.
 
 ### Checklist (per dandiset — structure & column names drift)
 - [x] **session vs per-probe files:** units/running/stimulus are in the SESSION file
