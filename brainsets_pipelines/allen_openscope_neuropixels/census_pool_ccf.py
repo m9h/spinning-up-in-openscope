@@ -30,10 +30,16 @@ import numpy as np
 
 POOL = ["000253", "000248", "000563", "000690", "001191", "001637"]
 
-# A session counts as CCF-registered only if its electrode x/y/z are real
-# anatomical micrometres: large enough to not be degenerate placeholders
-# (001191's are ~0-10) and varying across the probe (not one constant value).
-CCF_MIN_MAX_UM = 100.0   # reject degenerate ~0-10 placeholders
+# A session counts as CCF-registered if its electrode x/y/z are real Allen
+# anatomical coordinates -- which the pool ships in TWO unit conventions:
+#   * micrometres (Allen/AIND nwb-ccf-packaging export; ~0-13200 um), and
+#   * millimetres (the 001191 'Loop' export; ~0-13 mm).
+# A degenerate placeholder (one constant value, or no anatomy) is rejected by
+# requiring per-axis distinctness AND, for the mm branch, real `location`
+# labels. NB: the 'um' magnitude floor (>=100) wrongly rejected mm-scale CCF
+# in earlier versions -- 001191's ~0-10 values are real mm CCF, not noise.
+CCF_MIN_MAX_UM = 100.0   # micrometre-scale CCF floor
+CCF_MIN_MAX_MM = 1.0     # millimetre-scale CCF floor (with anatomy corroboration)
 CCF_MIN_DISTINCT = 20    # per-axis distinct finite values
 ELECTRODES_PATH = "/general/extracellular_ephys/electrodes"
 
@@ -46,19 +52,25 @@ def _n_real_locations(el):
 
 
 def classify_electrodes(el):
-    """-> (registered: bool, detail: str, n_locations: int)."""
+    """-> (registered: bool, detail: str, n_locations: int, unit: str|None)."""
     cols = set(el.keys())
     nloc = _n_real_locations(el)
     if not ({"x", "y", "z"} <= cols):
-        return False, "no x/y/z cols", nloc
+        return False, "no x/y/z cols", nloc, None
     X = [el[k][:] for k in ("x", "y", "z")]
     fin = np.isfinite(X[0]) & np.isfinite(X[1]) & np.isfinite(X[2])
     if not fin.any():
-        return False, "xyz all-NaN", nloc
+        return False, "xyz all-NaN", nloc, None
     mx = max(float(np.nanmax(np.abs(v[fin]))) for v in X)
     nd = min(int(len(np.unique(v[fin]))) for v in X)
-    reg = mx >= CCF_MIN_MAX_UM and nd >= CCF_MIN_DISTINCT
-    return reg, f"max={mx:.0f} mindistinct={nd}", nloc
+    unit = None
+    if nd >= CCF_MIN_DISTINCT:
+        if mx >= CCF_MIN_MAX_UM:
+            unit = "um"
+        elif mx >= CCF_MIN_MAX_MM and nloc >= 5:  # mm CCF, anatomy-corroborated
+            unit = "mm"
+    reg = unit is not None
+    return reg, f"max={mx:.4g} mindistinct={nd} unit={unit}", nloc, unit
 
 
 def _n_units(f):
@@ -91,14 +103,14 @@ def census_dandiset(ds_id, rows):
             with h5py.File(rf, "r") as f:
                 nu = _n_units(f)
                 if ELECTRODES_PATH not in f:
-                    reg, detail, nloc = False, "no electrodes group", 0
+                    reg, detail, nloc, unit = False, "no electrodes group", 0, None
                 else:
-                    reg, detail, nloc = classify_electrodes(f[ELECTRODES_PATH])
+                    reg, detail, nloc, unit = classify_electrodes(f[ELECTRODES_PATH])
             ready = bool(reg and nu > 0)
             reg_n += int(reg)
             ready_n += int(ready)
             rec.update(units=nu, registered=reg, fm_ready=ready,
-                       detail=detail, n_locations=nloc)
+                       detail=detail, n_locations=nloc, ccf_unit=unit)
             tag = "FM-READY  " if ready else ("reg/0units" if reg else "no-ccf    ")
             print(f"  {tag} | units={nu:5d} | loc={nloc:3d} | {detail:24s} | {name}",
                   flush=True)

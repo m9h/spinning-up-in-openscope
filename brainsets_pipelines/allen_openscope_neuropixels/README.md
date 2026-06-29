@@ -67,7 +67,7 @@ python brainsets_pipelines/allen_openscope_neuropixels/sweep_pool.py     # whole
 | 000248 | 3026 | 137.1M | peak_channel_id | 99% (1030) | running | **READY** |
 | 000563 | 2299 | 121.6M | peak_channel_id | 100% (970) | running | **READY** |
 | 000690 | 3091 | 81.2M | peak_channel_id | 100% (1086) | running | **READY** |
-| 001191 | 3307 | 131.4M | electrodes_region | — (region-only) | running_new | needs CCF reg. |
+| 001191 | 3307 | 131.4M | electrodes_region | 100% **mm** (1507) | running_new | **READY (mm CCF)** |
 | 001637 | 4247 | 94.6M | electrodes_region+extremum | — (no anat.) | running | mostly needs reg.† |
 
 > **† 001637 is per-session heterogeneous (censused 2026-06-27).** A streaming metadata
@@ -87,14 +87,14 @@ python brainsets_pipelines/allen_openscope_neuropixels/sweep_pool.py     # whole
   sets use the `units.electrodes` region — and the *peak* is `extremum_channel_index`, NOT the
   first row (first row = electrode 0 for every unit → all-same-coordinate bug).
 - **running module:** `running` vs `running_new` (iface `running_speed` vs `running_speed_new`).
-- **CCF registration gap (assess per session):** the two newest **community SpikeInterface**
-  sets (**001191, 001637**) are *mostly* not Allen-CCF-registered, but — as the 001637 census
-  above shows — registration is **sporadic at the session level**, so gate on it per session.
-  001191's electrode `x/y/z` are degenerate placeholders (~0–10, rejected by a magnitude
-  guard); un-registered 001637 sessions have **no absolute `x/y/z` columns** and `location`
-  absent/`unknown` (probe-space coords only). A magnitude+distinctness guard cleanly separates
-  the two cases. For un-registered sessions, run CCF registration to unlock the spatial
-  embedding; until then use region as a coarse token or the learnable unit-embedding path only.
+- **CCF registration gap (assess per session, mind the units):** **001191 is fully registered —
+  in millimetres** (its ~0–11 values are real CCF, not placeholders: region centroids are
+  anatomically tight and correctly ordered; rescale mm→µm). **001637 is per-session split** — 2/48
+  registered (µm), 46 un-registered (no `x/y/z`, `location='unknown'`). So the only genuine
+  registration target is **001637's 46 sessions**. A magnitude+distinctness+anatomy guard separates
+  µm-CCF, mm-CCF, and truly-absent. For the 46: register (see the scope brief) to unlock the spatial
+  embedding; until then use the learnable unit-embedding path. `units.estimated_x/y/z` are
+  **probe-space** (spike localization, `estimated_y` ≡ `depth`) — not anatomical, no help here.
 
 ### Per-session CCF census (whole pool, 2026-06-27)
 
@@ -103,23 +103,28 @@ non-probe session and classifies each as **FM-ready** = has spike-sorted units A
 Allen-CCFv3 electrode coords (magnitude+distinctness guard rejects 001191's ~0–10 placeholders).
 This is the gate sweep_pool.py is too coarse for — registration is per session, not per dandiset.
 
-| DANDI | sessions | CCF-registered | FM-ready (units + CCF) |
-|---|---|---|---|
-| 000253 | 14 | 14 | 14 |
-| 000248 | 12 | 12 | 12 |
-| 000563 | 14 | 14 | 14 |
-| 000690 | 51 | 51 | **50** |
-| 001191 | 14 | 0 | 0 |
-| 001637 | 48 | 2 | 2 |
-| **total** | **153** | **93** | **92** |
+| DANDI | sessions | CCF-registered | FM-ready (units + CCF) | CCF unit |
+|---|---|---|---|---|
+| 000253 | 14 | 14 | 14 | µm |
+| 000248 | 12 | 12 | 12 | µm |
+| 000563 | 14 | 14 | 14 | µm |
+| 000690 | 51 | 51 | **50** | µm |
+| 001191 | 14 | **14** | **14** | **mm** |
+| 001637 | 48 | 2 | 2 | µm |
+| **total** | **153** | **107** | **106** | |
 
-- **92 FM-ready sessions** (units + real CCF) — the CCFv3 spatial-embedding pretraining pool.
-  The four Allen dandisets are uniformly registered; the two community sets are the gap.
+- **106 FM-ready sessions** (units + real CCF) — the CCFv3 spatial-embedding pretraining pool.
+- **Two CCF unit conventions:** the Allen/AIND sets export CCF in **µm** (~0–13200); the **001191
+  "Loop"** set exports in **mm** (~0–13). 001191's mm values were briefly mis-rejected as
+  "degenerate placeholders" by a µm-only magnitude guard — they are **real CCF** (region centroids
+  anatomically tight + correctly ordered). The classifier now detects unit by magnitude; the
+  extractor must rescale mm→µm.
 - **000690 anomaly:** `sub-717438_ses-1334311030_ecephys.nwb` is CCF-registered but has **0
   units** (no `/units` group — spikes live in a sibling file) → correctly excluded from FM-ready.
-- **001191 (0/14) + 001637 (46/48 un-registered) = 60 sessions** with units but no absolute CCF.
-  Still trainable via the learnable unit-embedding path, or after CCF registration to join the
-  spatial-embedding pool.
+- **001637 (46/48 un-registered) = the only genuine registration target.** Those 46 have units but
+  no electrode CCF. Trainable now via the learnable unit-embedding path; see
+  **`briefs/ccf-registration-community-sessions.md`** for the registration scope (primary path:
+  pull/await AIND's upstream histology-grade CCF; fallback: headless IBL `EphysAlignment`).
 
 ```bash
 python census_pool_ccf.py                         # whole pool
